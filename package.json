@@ -1,0 +1,10 @@
+{
+  "name": "NotionToolkit",
+  "version": "1.0.0",
+  "main": "index.js",
+  "author": "DaniloArantesF <dfilho@purdue.edu>",
+  "license": "MIT",
+  "dependencies": {
+    "@notionhq/client": "^2.1.1"
+  }
+}
