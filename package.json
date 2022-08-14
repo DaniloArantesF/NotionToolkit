@@ -5,6 +5,8 @@
   "author": "DaniloArantesF <dfilho@purdue.edu>",
   "license": "MIT",
   "dependencies": {
-    "@notionhq/client": "^2.1.1"
+    "@notionhq/client": "^2.1.1",
+    "dotenv": "^16.0.1",
+    "ts-node": "^10.9.1"
   }
 }
