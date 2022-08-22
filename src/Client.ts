@@ -6,6 +6,7 @@ import {
   PartialPageObjectResponse,
   QueryDatabaseResponse,
 } from '@notionhq/client/build/src/api-endpoints';
+import { typesMap } from './util';
 
 /** Filter Types */
 type ExistencePropertyFilter = { is_empty: true } | { is_not_empty: true };
@@ -290,8 +291,39 @@ class NotionToolkit {
   // TODO
   public deletePages = async () => {};
 
-  // TODO
-  private checkSchema = async () => {};
+  /**
+   * Called at initialization, checks if given schema is compatible
+   * with the database properties
+   * @returns true if schema valid false otherwise
+   */
+  public checkSchema = async () => {
+    const database = await this.notionClient.databases.retrieve({
+      database_id: this.databaseId,
+    });
+
+    // Convert schema to { title: type } for faster lookup
+    const keyTypes: { [index: string]: string } = {};
+    Object.values(this.schema).forEach(({ title, type }) => {
+      // Check if type name is different from notion's and use
+      // map if so
+      keyTypes[title] = type in typesMap ? typesMap[type] : type;
+    });
+
+    // Go through database properties and check that given schema types match
+    const schemaValid = Object.values(database.properties).reduce(
+      (prev, { name, type }) => {
+        if (!keyTypes[name] || keyTypes[name] !== type) {
+          return false;
+        }
+        return prev && true;
+      },
+      true,
+    );
+
+    if (!schemaValid) {
+      throw new Error('Schema is not valid!');
+    }
+  };
 }
 
 export default NotionToolkit;

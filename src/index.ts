@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import NotionToolkit, { NotionSchema } from './Client';
 dotenv.config();
 
+// test db schema
 const dbSchema: NotionSchema = {
   number: {
     title: 'Number Property',
@@ -26,13 +27,9 @@ async function main() {
     dbId,
     dbSchema,
   );
-  const res = await Notion.createPage({
-    number: 42,
-    checkbox: true,
-    text: 'helo friends',
-    title: 'i like turtles',
-  });
-  console.log(res);
+
+  const pages = await Notion.query();
+  console.log(pages);
 }
 
 main();

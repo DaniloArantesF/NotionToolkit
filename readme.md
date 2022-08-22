@@ -7,7 +7,7 @@ It is used to automate tasks that involve reading and creating many pages.
 Create .env file and set `NOTION_KEY` to your api key
 
 ### Database Type Declarations
-  - [ ] Check that given schema and database type match
+  - [X] Check that given schema and database type match
   - [ ] Cover all property types supported by Notion
 
 
