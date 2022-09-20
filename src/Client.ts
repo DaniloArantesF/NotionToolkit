@@ -6,7 +6,8 @@ import {
   PartialPageObjectResponse,
   QueryDatabaseResponse,
 } from '@notionhq/client/build/src/api-endpoints';
-import { typesMap } from './util';
+import { sleep, typesMap } from './util';
+// import cliProgress from 'cli-progress';
 
 /** Filter Types */
 type ExistencePropertyFilter = { is_empty: true } | { is_not_empty: true };
@@ -59,16 +60,24 @@ export type NotionFilter =
     }
   | PropertyFilter;
 
+
+type PagePropertyValue = string | number | boolean | undefined;
+
 interface PageProperties {
-  [index: string]: string | number | boolean | null;
+  [index: string]: PagePropertyValue;
 }
 
-interface Page {
+// partial page
+// does not include property values
+export interface Page {
   id: string;
-  properties: PageProperties;
   lastEdited: string;
   url: string;
 }
+
+export type FullPage = Page & {
+  properties: PageProperties | undefined;
+};
 
 // Single database property
 export interface NotionProperty {
@@ -94,10 +103,11 @@ class NotionToolkit {
   }
 
   /**
-   * Query the database and retrieve property values for each page
+   * Query database
+   * Returns list of pages w/o property values
    * @param query See https://developers.notion.com/reference/post-database-query-filter
-   * @param fetchAll if omitted only first page will be fetched
-   * @returns
+   * @param fetchAll if omitted return only first 100 pages
+   * @returns {Page}
    */
   public query = async (query?: NotionFilter, fetchAll = false) => {
     try {
@@ -120,78 +130,148 @@ class NotionToolkit {
       }
 
       // Get property values & extract useful data
-      const pages: Page[] = [];
-      const propertyPromises = pagesData.map(async (pageData) => {
-        const curPage = pageData as PageObjectResponse;
-        const propertyKeys = Object.keys(curPage.properties);
-        const propertyValues: PageProperties = {};
-        for (let j = 0; j < propertyKeys.length; j++) {
-          try {
-            const propertyValue =
-              await this.notionClient.pages.properties.retrieve({
-                page_id: curPage.id,
-                property_id: curPage.properties[propertyKeys[j]].id,
-              });
-            let value: string | number | boolean = '';
-            if (propertyValue.object === 'property_item') {
-              const property: PropertyItemObjectResponse = propertyValue;
-              switch (property.type) {
-                case 'checkbox':
-                  value = property.checkbox;
-                  break;
-                case 'date':
-                  // TODO
-                  break;
-                case 'last_edited_time':
-                  value = property.last_edited_time;
-                  break;
-                case 'multi_select':
-                  // TODO
-                  break;
-                case 'number':
-                  value = property.number ?? 0;
-                  break;
-                case 'select':
-                  value = property.select?.name ?? '';
-                  break;
-                case 'status':
-                  value = property.status?.name ?? '';
-                  break;
-                case 'url':
-                  value = property.url ?? '';
-                  break;
-              }
-            }
-
-            // title, rich_text, relation and people are returned as list
-            if (propertyValue.object == 'list') {
-              const property: PropertyItemListResponse = propertyValue;
-              if (property.results[0].type === 'title') {
-                value = property.results[0].title.plain_text;
-              } else if (property.results[0].type === 'rich_text') {
-                value = property.results[0].rich_text.plain_text;
-              }
-            }
-
-            propertyValues[propertyKeys[j]] = value;
-          } catch (error) {
-            // Error is thrown when value is empty
-            propertyValues[propertyKeys[j]] = '';
-          }
-        }
-
-        pages.push({
-          id: curPage.id,
-          lastEdited: curPage.last_edited_time,
-          properties: propertyValues,
-          url: curPage.url,
-        });
-      });
-      await Promise.all(propertyPromises);
+      const pages: Page[] = (pagesData as PageObjectResponse[]).map(
+        ({ id, last_edited_time, url }) => ({
+          id,
+          lastEdited: last_edited_time,
+          url,
+        }),
+      );
       return pages;
     } catch (error) {
       console.error('Error making query.');
     }
+  };
+
+  /**
+   * Fetches pages given by pageIds
+   * @param pageIds
+   */
+  public fetch = async (pageIds: string[]) => {
+    const pages: FullPage[] = [];
+    for (let i = 0; i < pageIds.length; i++) {
+      try {
+        pages.push(await this.getPageById(pageIds[i]));
+      } catch (error) {
+        console.log('Error');
+      }
+    }
+    return pages;
+  };
+
+  // used when property values are included
+  private formatPageProperties = (page: PageObjectResponse) => {
+    const propertyKeys = Object.keys(page.properties);
+    const propertyValues: PageProperties = {};
+
+    for (let j = 0; j < propertyKeys.length; j++) {
+      const propertyValue = page.properties[propertyKeys[j]] as
+        | PropertyItemObjectResponse
+        | PropertyItemListResponse;
+
+      let value: PagePropertyValue = '';
+      if (propertyValue.object === 'property_item') {
+        const property: PropertyItemObjectResponse = propertyValue;
+        switch (property.type) {
+          case 'checkbox':
+            value = property.checkbox;
+            break;
+          case 'date':
+            // TODO
+            break;
+          case 'last_edited_time':
+            value = property.last_edited_time;
+            break;
+          case 'multi_select':
+            // TODO
+            break;
+          case 'number':
+            value = property.number ?? 0;
+            break;
+          case 'select':
+            value = property.select?.name ?? '';
+            break;
+          case 'status':
+            value = property.status?.name ?? '';
+            break;
+          case 'url':
+            value = property.url ?? '';
+            break;
+          case 'title':
+            value = property.title.plain_text ?? '';
+            break;
+          case 'rich_text':
+            value = property.rich_text.plain_text ?? '';
+            break;
+        }
+      } // title, rich_text, relation and people are returned as list
+      else if (propertyValue.object === 'list') {
+        console.log('list');
+        const property: PropertyItemListResponse = propertyValue;
+        if (property.results[0].type === 'title') {
+          value = property.results[0].title.plain_text;
+        } else if (property.results[0].type === 'rich_text') {
+          value = property.results[0].rich_text.plain_text;
+        }
+      } else {
+        // returned by page.retrieve
+        // TODO: figure out types for this
+        const property = propertyValue as any;
+
+        switch (property.type) {
+          case 'title':
+            value = property.title[0]?.plain_text;
+            break;
+          case 'rich_text':
+            value = property.rich_text[0]?.plain_text;
+            break;
+          case 'number':
+            value = property.number;
+            break;
+          case 'select':
+            value = property.select.name;
+            break;
+        }
+      }
+
+      // TODO: change this to schema key
+      propertyValues[propertyKeys[j]] = value;
+    }
+
+    return propertyValues;
+  };
+
+  public getPagesByTitle = async (pageTitle: string) => {
+    const schemaProperty = Object.values(this.schema).find(
+      ({ title, type }) => type === 'title',
+    );
+    if (!schemaProperty) {
+      return;
+    }
+
+    const res = await this.query({
+      property: schemaProperty.title,
+      rich_text: {
+        equals: pageTitle,
+      },
+    });
+
+    return res;
+  };
+
+  public getPageById = async (pageId: string) => {
+    const page = (await this.notionClient.pages.retrieve({
+      page_id: pageId,
+    })) as PageObjectResponse;
+
+    const properties = this.formatPageProperties(page);
+
+    return {
+      id: page.id,
+      lastEdited: page.last_edited_time,
+      url: page.url,
+      properties,
+    } as FullPage;
   };
 
   /**
@@ -218,53 +298,19 @@ class NotionToolkit {
     const properties: any = {};
     const children: any[] = [];
 
-    // Create properties payload
-    for (const [property, { title, type }] of Object.entries(this.schema)) {
-      switch (type) {
-        case 'title':
-          properties[title] = {
-            title: [
-              {
-                text: {
-                  content: data[property],
-                },
-              },
-            ],
-          };
-          break;
-        case 'number':
-          properties[title] = {
-            type: 'number',
-            number: data[property],
-          };
-          break;
-        case 'checkbox':
-          properties[title] = {
-            checkbox: data[property],
-          };
-          break;
-        case 'select':
-          properties[title] = {
-            select: {
-              name: data[property],
-            },
-          };
-          break;
-        case 'text':
-          properties[title] = {
-            rich_text: [
-              {
-                text: {
-                  content: data[property] !== undefined ? data[property] : '',
-                },
-              },
-            ],
-          };
-          break;
-      }
-    }
-
     try {
+      // Create properties payload
+      for (const [
+        schemaPropertyTitle,
+        { title: databasePropertyTitle, type },
+      ] of Object.entries(this.schema)) {
+        properties[databasePropertyTitle] = this.createPropertyObject(
+          schemaPropertyTitle,
+          data[schemaPropertyTitle],
+        );
+      }
+
+      // TODO: stop if error is thrown
       const res = await this.notionClient.pages.create({
         parent: { database_id: this.databaseId },
         properties,
@@ -276,11 +322,111 @@ class NotionToolkit {
     }
   };
 
+  private createPropertyObject = (title: string, value: any) => {
+    if (!(title in this.schema)) {
+      return new Error(`Property ${title}: ${value} is invalid`);
+    }
+    const { type } = this.schema[title];
+
+    switch (type) {
+      case 'title':
+        return {
+          title: [
+            {
+              text: {
+                content: value,
+              },
+            },
+          ],
+        };
+        break;
+      case 'number':
+        return {
+          type: 'number',
+          number: value,
+        };
+        break;
+      case 'checkbox':
+        return {
+          checkbox: value,
+        };
+        break;
+      case 'select':
+        return {
+          select: {
+            name: value,
+          },
+        };
+        break;
+      case 'text':
+        return {
+          rich_text: [
+            {
+              text: {
+                content: value !== undefined ? value : '',
+              },
+            },
+          ],
+        };
+        break;
+    }
+  };
+
   // TODO
   public createPages = async () => {};
 
-  // TODO
-  public updatePage = async () => {};
+  /**
+   * Updates properties of a page
+   * TODO: update block children
+   * @param pageId id of page to be updated
+   * @param properties new property values
+   */
+  public updatePage = async (pageId: string, newValues: PageProperties) => {
+    const properties: any = {};
+    try {
+      Object.keys(newValues).forEach((schemaPropertyTitle) => {
+        const { title: notionPropertyTitle } = this.schema[schemaPropertyTitle];
+        properties[notionPropertyTitle] = this.createPropertyObject(
+          schemaPropertyTitle,
+          newValues[schemaPropertyTitle],
+        );
+      });
+
+      const res = await this.notionClient.pages.update({
+        page_id: pageId,
+        properties,
+      });
+      return res;
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  /**
+   * Appends an image block to a page
+   * @param pageId
+   * @param url image url
+   */
+  public appendImage = async (pageId: string, url: string) => {
+    try {
+      const res = await this.notionClient.blocks.children.append({
+        block_id: pageId,
+        children: [
+          {
+            image: {
+              external: {
+                url,
+              },
+            },
+          },
+        ],
+      });
+      return true;
+    } catch (error) {
+      console.log('Error appending block');
+      return false;
+    }
+  };
 
   // TODO
   public updatePages = async () => {};

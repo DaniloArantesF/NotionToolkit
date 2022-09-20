@@ -11,3 +11,6 @@ Create .env file and set `NOTION_KEY` to your api key
   - [ ] Cover all property types supported by Notion
 
 
+## Notes
+  * query doesn't return property values, only ids
+  * pages.retrieve returns property values
